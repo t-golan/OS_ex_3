@@ -16,7 +16,7 @@ struct JobContext{
 
     const MapReduceClient* client; // the given client
     const InputVec* inputVec; // the input vector
-    const OutputVec* outputVec; // the output vector
+    OutputVec* outputVec; // the output vector
     int multiThreadLevel; // the amount of needed thread (maybe useless)
     pthread_t* threads; // pointer to an array of all existing threads
 };
@@ -33,6 +33,27 @@ void emit2 (K2* key, V2* value, void* context){
     intermediaryElements++;
 }
 
+/***
+ * updates the percentage of the job state
+ * @param jobContext
+ */
+void updatePercentage(JobContext* jobContext){
+
+    // the jobState is shared by all thread which makes changing it a critical code segment
+    pthread_mutex_lock(&jobContext->jobStateMutex);
+
+    if(jobContext->jobState.stage == MAP_STAGE){
+        jobContext->jobState.percentage = intermediaryElements / jobContext->multiThreadLevel * 100;
+        return;
+    }
+    if(jobContext->jobState.stage == MAP_STAGE){
+        jobContext->jobState.percentage = outputElements / jobContext->multiThreadLevel * 100;
+        return;
+    }
+
+    pthread_mutex_unlock(&jobContext->jobStateMutex);
+}
+
 /**
  * the map phase as it is suppose to be in all different threads (including the main thread)
  * @param arg the jobContext
@@ -46,6 +67,8 @@ void* mapPhase(void* arg, void* context){
     if(oldValue < jc->inputVec->size()) {
         InputPair kv = (*(jc->inputVec))[oldValue];
         jc->client->map(kv.first, kv.second, context);
+        updatePercentage(jc);
+
     }
     return NULL;
 }
