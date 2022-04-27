@@ -39,17 +39,18 @@ void emit2 (K2* key, V2* value, void* context){
  */
 void updatePercentage(JobContext* jobContext){
 
-    // the jobState is shared by all thread which makes changing it a critical code segment
+    // the jobState is shared by all threads which makes changing it a critical code segment
     pthread_mutex_lock(&jobContext->jobStateMutex);
 
     if(jobContext->jobState.stage == MAP_STAGE){
         jobContext->jobState.percentage = intermediaryElements / jobContext->multiThreadLevel * 100;
         return;
     }
-    if(jobContext->jobState.stage == MAP_STAGE){
+    if(jobContext->jobState.stage == REDUCE_STAGE){
         jobContext->jobState.percentage = outputElements / jobContext->multiThreadLevel * 100;
         return;
     }
+    // need to add what happens in the shuffle case
 
     pthread_mutex_unlock(&jobContext->jobStateMutex);
 }
@@ -89,7 +90,7 @@ void* mapSortReduceThread(void* arg){
 }
 
 /***
- * init the job context of the currnet job
+ * init the job context of the current job
  * @param client
  * @param inputVec
  * @param outputVec
