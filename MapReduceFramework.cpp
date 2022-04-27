@@ -100,6 +100,40 @@ void sortPhase(void* context){
     sort(tc->intermediateVec->begin(), tc->intermediateVec->end());
 }
 
+
+vector<IntermediateVec> shufflePhase(void* arg) {
+    JobContext *jc = (JobContext *) arg;
+    auto shuffleVec = new vector<IntermediateVec>();
+    auto max = jc->contexts[0].intermediateVec->begin();
+    auto prev_max = NULL;
+    for(int i = 0; jc->multiThreadLevel; i++) {
+        if (jc->contexts[0].intermediateVec->begin() > max) {
+            max = jc->contexts[0].intermediateVec->begin();
+        }
+        if (prev_max != max){
+            Vec->insert(new IntermediateVec());
+        }
+        shu
+    }
+
+        for (int i = 0; jc->multiThreadLevel; i++) {
+            if (jc->contexts[0].intermediateVec->begin() == max) {
+                shuffleVec.end(.insert())
+            }
+        }
+    }
+}
+
+void reducePhase(void* arg, void* context){
+    JobContext* jc = (JobContext*) arg;
+    int oldValue = *(jc->atomic_counter)++;
+    if(oldValue < jc->intermediateVec.size()) {
+        IntermediateVec kv = ((jc->intermediateVec))[oldValue];
+        jc->client->reduce(&kv, context);
+        updatePercentage(jc);
+    }
+}
+
 /***
  * a thread - which is not the main one - this thread should:
  * map - sort - wait for shuffle - than reduce
@@ -203,6 +237,8 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
     {
         pthread_cond_wait(&(jobContext.cvMapSortBarrier), NULL);
     }
+    jobContext.atomic_counter = 0;
+    jobContext.intermediateVec = (shufflePhase(&jobContext));
     // the shuffle phase
 
 }
