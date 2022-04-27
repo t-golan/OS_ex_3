@@ -61,7 +61,7 @@ void updatePercentage(JobContext* jobContext){
  * @param context the context of the thread
  * @return Null
  */
-void* mapPhase(void* arg, void* context){
+void mapPhase(void* arg, void* context){
 
     JobContext* jc = (JobContext*) arg;
     int oldValue = atomic_counter++;
@@ -69,9 +69,12 @@ void* mapPhase(void* arg, void* context){
         InputPair kv = (*(jc->inputVec))[oldValue];
         jc->client->map(kv.first, kv.second, context);
         updatePercentage(jc);
-
     }
-    return NULL;
+}
+
+void sortPhase(void* context){
+    OutputVec* outputMapVec = (OutputVec*)context;
+    sort(outputMapVec->begin(), outputMapVec->end());
 }
 
 /***
@@ -84,8 +87,11 @@ void* mapSortReduceThread(void* arg){
 
     OutputVec* outputMapVec = new OutputVec();
 
+
     // the map phase
     mapPhase(arg, outputMapVec);
+    sortPhase(outputMapVec)
+
 
 }
 
@@ -124,8 +130,9 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
             exit(1);
         }
     }
-
-    // map phase of  the main thread
+    OutputVec* outputMapVec = new OutputVec();
+    mapPhase(&jobContext, outputMapVec);
+    sortPhase(outputMapVec);
 
     // here should be the  barrier
 
