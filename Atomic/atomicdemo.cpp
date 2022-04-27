@@ -21,7 +21,6 @@ void* foo(void* arg)
         (void) old_value;  // ignore not used warning
         (*(tc->bad_counter))++;
     }
-    
     return 0;
 }
 

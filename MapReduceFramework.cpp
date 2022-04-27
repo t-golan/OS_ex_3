@@ -9,6 +9,9 @@
 #define SYSTEM_ERROR "system error: "
 
 using namespace std;
+struct ThreadContext{
+    OutputVec* outputMapVec;
+};
 
 struct JobContext{
     JobState jobState; // the job state
@@ -19,11 +22,16 @@ struct JobContext{
     OutputVec* outputVec; // the output vector
     int multiThreadLevel; // the amount of needed thread (maybe useless)
     pthread_t* threads; // pointer to an array of all existing threads
+    ThreadContext* contexts;
 };
 
 atomic<int> intermediaryElements(0); // a count for the amount of intermediary elements
 atomic<int> outputElements(0); // a count for the amount of output elements
-atomic<int> atomic_counter(0); // a generic count to be used
+atomic<int> atomic_counter(0); // a generic count to be used3
+atomic<int> atomic_barrier(0); // a counter to use to implement the barrier
+pthread_mutex_t barrierMutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cvBarrier = PTHREAD_COND_INITIALIZER;
+
 
 void emit2 (K2* key, V2* value, void* context){
 
@@ -85,14 +93,16 @@ void sortPhase(void* context){
  */
 void* mapSortReduceThread(void* arg){
 
-    OutputVec* outputMapVec = new OutputVec();
+    JobContext* jc = (JobContext*) arg;
 
 
     // the map phase
     mapPhase(arg, outputMapVec);
-    sortPhase(outputMapVec)
-
-
+    sortPhase(outputMapVec);
+    if(++atomic_barrier < jc->multiThreadLevel)
+    {
+        pthread_cond_wait(&cvBarrier, NULL);
+    }
 }
 
 /***
@@ -114,6 +124,8 @@ void initJobContext(const MapReduceClient& client,
     (*jobContext).jobStateMutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_t threads[multiThreadLevel];
     (*jobContext).threads = threads;
+    ThreadContext contexts[multiThreadLevel];
+    (*jobContext).contexts = contexts;
 }
 
 
@@ -133,9 +145,10 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
     OutputVec* outputMapVec = new OutputVec();
     mapPhase(&jobContext, outputMapVec);
     sortPhase(outputMapVec);
-
-    // here should be the  barrier
-
+    if(++atomic_barrier < jobContext.multiThreadLevel)
+    {
+        pthread_cond_wait(&cvBarrier, NULL);
+    }
     // the shuffle phase
 
     // sort phase
