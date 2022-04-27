@@ -54,11 +54,11 @@ void updatePercentage(JobContext* jobContext){
     pthread_mutex_lock(&jobContext->jobStateMutex);
 
     if(jobContext->jobState.stage == MAP_STAGE){
-        jobContext->jobState.percentage = intermediaryElements / jobContext->multiThreadLevel * 100;
+        jobContext->jobState.percentage = *(jobContext->intermediaryElements) / jobContext->multiThreadLevel * 100;
         return;
     }
     if(jobContext->jobState.stage == REDUCE_STAGE){
-        jobContext->jobState.percentage = outputElements / jobContext->multiThreadLevel * 100;
+        jobContext->jobState.percentage = *(jobContext->outputElements) / jobContext->multiThreadLevel * 100;
         return;
     }
     // need to add what happens in the shuffle case
@@ -75,7 +75,7 @@ void updatePercentage(JobContext* jobContext){
 void mapPhase(void* arg, void* context){
 
     JobContext* jc = (JobContext*) arg;
-    int oldValue = atomic_counter++;
+    int oldValue = *(jc->atomic_counter)++;
     if(oldValue < jc->inputVec->size()) {
         InputPair kv = (*(jc->inputVec))[oldValue];
         jc->client->map(kv.first, kv.second, context);
@@ -102,7 +102,7 @@ void* mapSortReduceThread(void* arg){
     // the map phase
     mapPhase(arg, outputMapVec);
     sortPhase(outputMapVec);
-    if(++atomic_barrier < jc->multiThreadLevel)
+    if(++(*(jc->atomic_barrier)) < jc->multiThreadLevel)
     {
         pthread_cond_wait(&cvBarrier, NULL);
     }
