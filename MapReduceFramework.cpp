@@ -23,14 +23,17 @@ struct JobContext{
     int multiThreadLevel; // the amount of needed thread (maybe useless)
     pthread_t* threads; // pointer to an array of all existing threads
     ThreadContext* contexts;
+
+    atomic<int>* intermediaryElements; // a count for the amount of intermediary elements
+    atomic<int>* outputElements; // a count for the amount of output elements
+    atomic<int>* atomic_counter; // a generic count to be used3
+    atomic<int>* atomic_barrier; // a counter to use to implement the barrier
+
+    pthread_mutex_t barrierMutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_cond_t cvBarrier = PTHREAD_COND_INITIALIZER;
 };
 
-atomic<int> intermediaryElements(0); // a count for the amount of intermediary elements
-atomic<int> outputElements(0); // a count for the amount of output elements
-atomic<int> atomic_counter(0); // a generic count to be used3
-atomic<int> atomic_barrier(0); // a counter to use to implement the barrier
-pthread_mutex_t barrierMutex = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t cvBarrier = PTHREAD_COND_INITIALIZER;
+
 
 
 void emit2 (K2* key, V2* value, void* context){
@@ -126,6 +129,18 @@ void initJobContext(const MapReduceClient& client,
     (*jobContext).threads = threads;
     ThreadContext contexts[multiThreadLevel];
     (*jobContext).contexts = contexts;
+
+    // the atomic_counters used by the job
+    atomic<int> atomic_counter(0);
+    atomic<int> atomic_barrier(0);
+    atomic<int> intermediaryElements(0);
+    atomic<int> outputElements(0);
+
+    (*jobContext).atomic_counter = &atomic_counter;
+    (*jobContext).atomic_barrier = &atomic_barrier;
+    (*jobContext).intermediaryElements = &intermediaryElements;
+    (*jobContext).outputElements = &outputElements;
+
 }
 
 
