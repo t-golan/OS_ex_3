@@ -11,8 +11,8 @@
 
 using namespace std;
 struct ThreadContext{
-    OutputVec* outputMapVec;
-    const JobContext* jobContext;
+    IntermediateVec* intermediateVec;
+    atomic<int>* intermediaryElements;
 };
 
 struct JobContext{
@@ -40,10 +40,10 @@ struct JobContext{
 
 void emit2 (K2* key, V2* value, void* context){
 
-    IntermediateVec* intermediateVec = (IntermediateVec*) context;
+    ThreadContext* threadContext = (ThreadContext*) context;
     IntermediatePair kv2 = IntermediatePair(key, value);
-    intermediateVec->push_back(kv2);
-    intermediaryElements++;
+    threadContext->intermediateVec->push_back(kv2);
+    threadContext->intermediaryElements++;
 }
 
 /***
@@ -64,7 +64,6 @@ void updatePercentage(JobContext* jobContext){
         return;
     }
     // need to add what happens in the shuffle case
-
     pthread_mutex_unlock(&jobContext->jobStateMutex);
 }
 
@@ -86,8 +85,7 @@ void mapPhase(void* arg, void* context){
 }
 
 void sortPhase(void* context){
-    OutputVec* outputMapVec = (OutputVec*)context;
-    sort(outputMapVec->begin(), outputMapVec->end());
+
 }
 
 /***
@@ -99,10 +97,12 @@ void sortPhase(void* context){
 void* mapSortReduceThread(void* arg){
 
     JobContext* jc = (JobContext*) arg;
-
+    int id = ++(*(jc->threadsId));
+    jc->contexts->intermediateVec = new IntermediateVec();
+    jc->contexts->intermediaryElements = jc->intermediaryElements;
 
     // the map phase
-    mapPhase(arg, outputMapVec);
+    mapPhase(arg, &(jc->contexts[id]));
     sortPhase(outputMapVec);
     if(++(*(jc->atomic_barrier)) < jc->multiThreadLevel)
     {
