@@ -13,6 +13,8 @@ using namespace std;
 struct ThreadContext{
     IntermediateVec* intermediateVec;
     atomic<int>* intermediaryElements;
+    OutputVec* outputVec;
+    atomic<int>* outputElements;
 };
 
 struct JobContext{
@@ -22,6 +24,7 @@ struct JobContext{
     const MapReduceClient* client; // the given client
     const InputVec* inputVec; // the input vector
     OutputVec* outputVec; // the output vector
+    vector<IntermediateVec> intermediateVec;
     int multiThreadLevel; // the amount of needed thread (maybe useless)
     pthread_t* threads; // pointer to an array of all existing threads
     ThreadContext* contexts;
@@ -34,7 +37,8 @@ struct JobContext{
 
 
     pthread_mutex_t barrierMutex = PTHREAD_MUTEX_INITIALIZER;
-    pthread_cond_t cvBarrier = PTHREAD_COND_INITIALIZER;
+    pthread_cond_t cvMapSortBarrier = PTHREAD_COND_INITIALIZER;
+    pthread_cond_t cvShuffleBarrier = PTHREAD_COND_INITIALIZER;
 };
 
 
@@ -43,6 +47,13 @@ void emit2 (K2* key, V2* value, void* context){
     ThreadContext* threadContext = (ThreadContext*) context;
     IntermediatePair kv2 = IntermediatePair(key, value);
     threadContext->intermediateVec->push_back(kv2);
+    threadContext->intermediaryElements++;
+}
+
+void emit3 (K3* key, V3* value, void* context){
+    ThreadContext* threadContext = (ThreadContext*) context;
+    OutputPair kv3 = OutputPair(key, value);
+    threadContext->outputVec->push_back(kv3);
     threadContext->intermediaryElements++;
 }
 
@@ -85,7 +96,8 @@ void mapPhase(void* arg, void* context){
 }
 
 void sortPhase(void* context){
-
+    ThreadContext* tc = (ThreadContext*) context;
+    sort(tc->intermediateVec->begin(), tc->intermediateVec->end());
 }
 
 /***
@@ -98,17 +110,30 @@ void* mapSortReduceThread(void* arg){
 
     JobContext* jc = (JobContext*) arg;
     int id = ++(*(jc->threadsId));
-    jc->contexts->intermediateVec = new IntermediateVec();
-    jc->contexts->intermediaryElements = jc->intermediaryElements;
+    ThreadContext threadContext =  jc->contexts[id];
+    threadContext.intermediateVec = new IntermediateVec();
+    threadContext.outputVec = jc->outputVec;
+    threadContext.intermediaryElements = jc->intermediaryElements;
+    threadContext.outputVec = jc->outputVec;
 
     // the map phase
-    mapPhase(arg, &(jc->contexts[id]));
-    sortPhase(outputMapVec);
+    mapPhase(arg, &threadContext);
+    sortPhase(&threadContext);
     if(++(*(jc->atomic_barrier)) < jc->multiThreadLevel)
     {
-        pthread_cond_wait(&cvBarrier, NULL);
+        if(pthread_cond_wait(&(jc->cvShuffleBarrier), NULL) != 0){
+            cerr << SYSTEM_ERROR << "pthread_cond_wait shuffle";
+            exit(1);
+        }
+    }
+    else{
+        if (pthread_cond_broadcast(&(jc->cvMapSortBarrier)) != 0) {
+            cerr << SYSTEM_ERROR << "pthread_cond_broadcast MapSort";
+            exit(1);
+        }
     }
 }
+
 
 /***
  * init the job context of the current job
@@ -151,9 +176,9 @@ void initJobContext(const MapReduceClient& client,
 JobHandle startMapReduceJob(const MapReduceClient& client,
                             const InputVec& inputVec, OutputVec& outputVec,
                             int multiThreadLevel){
-
     //init JobContext
     struct JobContext  jobContext;
+    initJobContext(client, inputVec, outputVec, multiThreadLevel, &jobContext);
 
     for (int i = 0; i < multiThreadLevel; ++i) {
         if(pthread_create(jobContext.threads + i, NULL, mapSortReduceThread, &jobContext) !=  0){
@@ -161,15 +186,24 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
             exit(1);
         }
     }
-    OutputVec* outputMapVec = new OutputVec();
-    mapPhase(&jobContext, outputMapVec);
-    sortPhase(outputMapVec);
-    if(++atomic_barrier < jobContext.multiThreadLevel)
+
+    ThreadContext mainThread;
+    jobContext.contexts[0] = mainThread;
+    IntermediateVec* intermediateVec = new IntermediateVec();
+
+    mainThread.intermediateVec = intermediateVec;
+    mainThread.outputVec = jobContext.outputVec;
+    mainThread.intermediaryElements = jobContext.intermediaryElements;
+    mainThread.outputElements = jobContext.outputElements;
+
+
+    mapPhase(&jobContext, &mainThread);
+    sortPhase(&mainThread);
+    if(++(*(jobContext.atomic_barrier)) < jobContext.multiThreadLevel)
     {
-        pthread_cond_wait(&cvBarrier, NULL);
+        pthread_cond_wait(&(jobContext.cvMapSortBarrier), NULL);
     }
     // the shuffle phase
 
-    // sort phase
 }
 
