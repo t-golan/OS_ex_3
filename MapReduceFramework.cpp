@@ -5,12 +5,14 @@
 #include <pthread.h>
 #include "MapReduceFramework.h"
 #include <iostream>
+#include <atomic>
 
 #define SYSTEM_ERROR "system error: "
 
 using namespace std;
 struct ThreadContext{
     OutputVec* outputMapVec;
+    const JobContext* jobContext;
 };
 
 struct JobContext{
@@ -28,12 +30,12 @@ struct JobContext{
     atomic<int>* outputElements; // a count for the amount of output elements
     atomic<int>* atomic_counter; // a generic count to be used3
     atomic<int>* atomic_barrier; // a counter to use to implement the barrier
+    atomic<int>* threadsId; // gives an id to each thread
+
 
     pthread_mutex_t barrierMutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_cond_t cvBarrier = PTHREAD_COND_INITIALIZER;
 };
-
-
 
 
 void emit2 (K2* key, V2* value, void* context){
@@ -135,11 +137,13 @@ void initJobContext(const MapReduceClient& client,
     atomic<int> atomic_barrier(0);
     atomic<int> intermediaryElements(0);
     atomic<int> outputElements(0);
+    atomic<int> threadsId(0);
 
     (*jobContext).atomic_counter = &atomic_counter;
     (*jobContext).atomic_barrier = &atomic_barrier;
     (*jobContext).intermediaryElements = &intermediaryElements;
     (*jobContext).outputElements = &outputElements;
+    (*jobContext).threadsId = &threadsId;
 
 }
 
