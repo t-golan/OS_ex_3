@@ -37,6 +37,7 @@ struct JobContext{
 
 
     pthread_mutex_t barrierMutex = PTHREAD_MUTEX_INITIALIZER;
+    pthread_mutex_t waitMutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_cond_t cvMapSortBarrier = PTHREAD_COND_INITIALIZER;
     pthread_cond_t cvShuffleBarrier = PTHREAD_COND_INITIALIZER;
 };
@@ -237,12 +238,13 @@ void initJobContext(const MapReduceClient& client,
 
 }
 
+}
 
 JobHandle startMapReduceJob(const MapReduceClient& client,
                             const InputVec& inputVec, OutputVec& outputVec,
                             int multiThreadLevel){
     //init JobContext
-    struct JobContext  jobContext;
+    struct JobContext jobContext;
     initJobContext(client, inputVec, outputVec, multiThreadLevel, &jobContext);
 
     for (int i = 0; i < multiThreadLevel; ++i) {
@@ -282,3 +284,30 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
 
 }
 
+void getJobState(JobHandle job, JobState* state){
+    auto jc = (JobContext*) job;
+    state->stage = jc->jobState.stage;
+    state->percentage = jc->jobState.percentage;
+}
+
+void waitForJob(JobHandle job){
+    auto jc = (JobContext*) job;
+    if(pthread_mutex_lock(&jc->waitMutex) != 0){
+        std::cerr << "Mutex lock error";
+        exit(1);
+    }
+    for(int i=0; i<jc->multiThreadLevel; ++i){
+        if(pthread_join(jc->threads[i], nullptr) != 0){
+            cerr << SYSTEM_ERROR << "pthread_join waitForJob " << i << " thread";
+            exit(1);
+        }
+    }
+    pthread_mutex_unlock(&jc->waitMutex);
+}
+
+void closeJobHandle(JobHandle job){
+    waitForJob(job);
+    auto jc = (JobContext*) job;
+    delete &jc->intermediateVec;
+    delete jc;
+}
