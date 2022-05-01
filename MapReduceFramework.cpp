@@ -225,10 +225,8 @@ void initJobContext(const MapReduceClient& client,
     (*jobContext).inputVec = &inputVec;
     (*jobContext).outputVec = &outputVec;
     (*jobContext).jobStateMutex = PTHREAD_MUTEX_INITIALIZER;
-    pthread_t threads[multiThreadLevel];
-    (*jobContext).threads = threads;
-    ThreadContext contexts[multiThreadLevel];
-    (*jobContext).contexts = contexts;
+    (*jobContext).threads  = new pthread_t[multiThreadLevel];
+    (*jobContext).contexts = new ThreadContext[multiThreadLevel];
     jobContext->is_waiting = false;
 
     // the atomic_counters used by the job
@@ -249,21 +247,21 @@ void initJobContext(const MapReduceClient& client,
 void* MainThread(void* arg){
 
     JobContext* jc = (JobContext*) arg;
-    for (int i = 0; i < jc->multiThreadLevel; ++i) {
+    for (int i = 1; i < jc->multiThreadLevel; ++i) {
         if(pthread_create(jc->threads + i, NULL, mapSortReduceThread, jc) !=  0){
             cerr << SYSTEM_ERROR << "pthread_create";
             exit(1);
         }
     }
 
-    ThreadContext mainThread;
-    jc->contexts[0] = mainThread;
+    ThreadContext* mainThread = new ThreadContext();
+    jc->contexts[0] = *mainThread;
     IntermediateVec* intermediateVec = new IntermediateVec();
 
-    mainThread.intermediateVec = intermediateVec;
-    mainThread.outputVec = jc->outputVec;
-    mainThread.intermediaryElements = jc->intermediaryElements;
-    mainThread.outputElements = jc->outputElements;
+    mainThread->intermediateVec = intermediateVec;
+    mainThread->outputVec = jc->outputVec;
+    mainThread->intermediaryElements = jc->intermediaryElements;
+    mainThread->outputElements = jc->outputElements;
 
     jc->jobState.stage = MAP_STAGE;
     mapPhase(&jc, &mainThread);
@@ -291,9 +289,10 @@ void* MainThread(void* arg){
 JobHandle startMapReduceJob(const MapReduceClient& client,
                             const InputVec& inputVec, OutputVec& outputVec,
                             int multiThreadLevel){
+
     auto* jobContext = new JobContext();
     initJobContext(client, inputVec, outputVec, multiThreadLevel, jobContext);
-    if(pthread_create(&(jobContext->threads[0]), NULL,
+    if(pthread_create(jobContext->threads, NULL,
                       MainThread, jobContext) != 0) {
         cerr << SYSTEM_ERROR << "pthread_create";
         exit(1);
@@ -315,7 +314,7 @@ void waitForJob(JobHandle job) {
     auto jc = (JobContext *) job;
     if (!jc->is_waiting) {
         jc->is_waiting = true;
-        if (pthread_join(jc->threads[0], nullptr) != 0) {
+        if (pthread_join(jc->threads[0], NULL)) {
             cerr << SYSTEM_ERROR << "pthread_join waitForJob ";
             exit(1);
         }
