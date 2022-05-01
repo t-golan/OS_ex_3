@@ -41,40 +41,43 @@ struct JobContext{
     pthread_cond_t cvShuffleBarrier = PTHREAD_COND_INITIALIZER;
 };
 
-
 void emit2 (K2* key, V2* value, void* context){
 
     ThreadContext* threadContext = (ThreadContext*) context;
     IntermediatePair kv2 = IntermediatePair(key, value);
     threadContext->intermediateVec->push_back(kv2);
-    threadContext->intermediaryElements++;
+    *(threadContext->intermediaryElements)++;
 }
 
 void emit3 (K3* key, V3* value, void* context){
     ThreadContext* threadContext = (ThreadContext*) context;
     OutputPair kv3 = OutputPair(key, value);
     threadContext->outputVec->push_back(kv3);
-    threadContext->intermediaryElements++;
+    *(threadContext->outputElements)++;
 }
 
 /***
  * updates the percentage of the job state
  * @param jobContext
  */
-void updatePercentage(JobContext* jobContext){
-
+void updatePercentageMap(JobContext* jobContext) {
     // the jobState is shared by all threads which makes changing it a critical code segment
     pthread_mutex_lock(&jobContext->jobStateMutex);
+    jobContext->jobState.percentage = *(jobContext->intermediaryElements) / jobContext->inputVec->size() * 100;
+    pthread_mutex_unlock(&jobContext->jobStateMutex);
+}
+void updatePercentageShuffle(JobContext *jobContext) {
+    // the jobState is shared by all threads which makes changing it a critical code segment
+    pthread_mutex_lock(&jobContext->jobStateMutex);
+    jobContext->jobState.percentage = *(jobContext->intermediaryElements) / jobContext->fullIntermediaryElements * 100;
+    pthread_mutex_unlock(&jobContext->jobStateMutex);
+}
 
-    if(jobContext->jobState.stage == MAP_STAGE){
-        jobContext->jobState.percentage = *(jobContext->intermediaryElements) / jobContext->multiThreadLevel * 100;
-        return;
-    }
-    if(jobContext->jobState.stage == REDUCE_STAGE){
-        jobContext->jobState.percentage = *(jobContext->outputElements) / jobContext->multiThreadLevel * 100;
-        return;
-    }
-    // need to add what happens in the shuffle case
+
+void updatePercentageReduce(JobContext* jobContext, int numOfElements){
+    // the jobState is shared by all threads which makes changing it a critical code segment
+    pthread_mutex_lock(&jobContext->jobStateMutex);
+    jobContext->jobState.percentage = numOfElements / jobContext->fullIntermediaryElements * 100;
     pthread_mutex_unlock(&jobContext->jobStateMutex);
 }
 
@@ -91,7 +94,7 @@ void mapPhase(void* arg, void* context){
     while(oldValue < jc->inputVec->size()) {
         InputPair kv = (*(jc->inputVec))[oldValue];
         jc->client->map(kv.first, kv.second, context);
-        updatePercentage(jc);
+        updatePercentageMap(jc);
     }
 }
 
@@ -161,7 +164,7 @@ void reducePhase(void* arg, void* context){
     while(oldValue < jc->intermediateVec.size()) {
         IntermediateVec kv = ((jc->intermediateVec))[oldValue];
         jc->client->reduce(&kv, context);
-        updatePercentage(jc);
+        updatePercentageReduce(jc, kv.size());
     }
 }
 
@@ -237,48 +240,94 @@ void initJobContext(const MapReduceClient& client,
 
 }
 
+void* MainThread(void* arg){
 
-JobHandle startMapReduceJob(const MapReduceClient& client,
-                            const InputVec& inputVec, OutputVec& outputVec,
-                            int multiThreadLevel){
-    //init JobContext
-    struct JobContext  jobContext;
-    initJobContext(client, inputVec, outputVec, multiThreadLevel, &jobContext);
-
-    for (int i = 0; i < multiThreadLevel; ++i) {
-        if(pthread_create(jobContext.threads + i, NULL, mapSortReduceThread, &jobContext) !=  0){
+    JobContext* jc = (JobContext*) arg;
+    for (int i = 0; i < jc->multiThreadLevel; ++i) {
+        if(pthread_create(jc->threads + i, NULL, mapSortReduceThread, jc) !=  0){
             cerr << SYSTEM_ERROR << "pthread_create";
             exit(1);
         }
     }
 
     ThreadContext mainThread;
-    jobContext.contexts[0] = mainThread;
+    jc->contexts[0] = mainThread;
     IntermediateVec* intermediateVec = new IntermediateVec();
 
     mainThread.intermediateVec = intermediateVec;
-    mainThread.outputVec = jobContext.outputVec;
-    mainThread.intermediaryElements = jobContext.intermediaryElements;
-    mainThread.outputElements = jobContext.outputElements;
+    mainThread.outputVec = jc->outputVec;
+    mainThread.intermediaryElements = jc->intermediaryElements;
+    mainThread.outputElements = jc->outputElements;
 
-
-    mapPhase(&jobContext, &mainThread);
+    jc->jobState.stage = MAP_STAGE;
+    mapPhase(&jc, &mainThread);
+    jc->fullIntermediaryElements = (int)(*jc->intermediaryElements);
     sortPhase(&mainThread);
-    if(++(*(jobContext.atomic_barrier)) < jobContext.multiThreadLevel)
+    if(++(*(jc->atomic_barrier)) < jc->multiThreadLevel)
     {
-        if(pthread_cond_wait(&(jobContext.cvMapSortBarrier), NULL) != 0) {
+        if(pthread_cond_wait(&(jc->cvMapSortBarrier), NULL) != 0) {
             cerr << SYSTEM_ERROR << "pthread_cond_wait mapSortBarrier main thread";
             exit(1);
         }
     }
-    jobContext.atomic_counter = 0;
-    shufflePhase(&jobContext);
-
-    if (pthread_cond_broadcast(&(jobContext.cvShuffleBarrier)) != 0) {
+    jc->atomic_counter = 0;
+    jc->jobState.stage = SHUFFLE_STAGE;
+    shufflePhase(&jc);
+    jc->jobState.stage = REDUCE_STAGE;
+    if (pthread_cond_broadcast(&(jc->cvShuffleBarrier)) != 0) {
         cerr << SYSTEM_ERROR << "pthread_cond_broadcast ShuffleBarrier main thread";
         exit(1);
     }
-    reducePhase(&jobContext, &mainThread);
+    reducePhase(&jc, &mainThread);
+}
+
+
+JobHandle startMapReduceJob(const MapReduceClient& client,
+                            const InputVec& inputVec, OutputVec& outputVec,
+                            int multiThreadLevel){
+    auto* jobContext = new JobContext();
+    initJobContext(client, inputVec, outputVec, multiThreadLevel, jobContext);
+    if(pthread_create(&(jobContext->threads[0]), NULL,
+                      MainThread, jobContext) != 0) {
+        cerr << SYSTEM_ERROR << "pthread_create";
+        exit(1);
+    }
+    return (JobHandle)(jobContext);
+
 
 }
 
+void getJobState(JobHandle job, JobState* state){
+    auto jc = (JobContext*) job;
+    pthread_mutex_lock(&jc->jobStateMutex);
+    state->stage = jc->jobState.stage;
+    state->percentage = jc->jobState.percentage;
+    pthread_mutex_unlock(&jc->jobStateMutex);
+}
+
+void waitForJob(JobHandle job) {
+    auto jc = (JobContext *) job;
+    if (!jc->is_waiting) {
+        jc->is_waiting = true;
+        if (pthread_join(jc->threads[0], nullptr) != 0) {
+            cerr << SYSTEM_ERROR << "pthread_join waitForJob ";
+            exit(1);
+        }
+        jc->is_waiting = false;
+    }
+}
+
+void closeJobHandle(JobHandle job){
+    waitForJob(job);
+    auto jc = (JobContext*) job;
+    delete &jc->intermediateVec;
+
+    // realises memory from all threads:
+    for(int i = 0;i < jc->multiThreadLevel; i++) {
+        delete jc->contexts[i].intermediateVec;
+    }
+    pthread_mutex_destroy(&jc->jobStateMutex);
+    pthread_cond_destroy(&jc->cvShuffleBarrier);
+    pthread_cond_destroy(&jc->cvMapSortBarrier);
+    delete jc;
+}
