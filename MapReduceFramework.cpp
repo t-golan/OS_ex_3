@@ -220,40 +220,26 @@ void initJobContext(const MapReduceClient& client,
                     const InputVec& inputVec, OutputVec& outputVec,
                     int multiThreadLevel, JobContext* jobContext){
 
-    (*jobContext).multiThreadLevel = multiThreadLevel;
-    (*jobContext).client = &client;
-    (*jobContext).inputVec = &inputVec;
-    (*jobContext).outputVec = &outputVec;
-    (*jobContext).jobStateMutex = PTHREAD_MUTEX_INITIALIZER;
-    (*jobContext).threads  = new pthread_t[multiThreadLevel];
-    (*jobContext).contexts = new ThreadContext[multiThreadLevel];
+    jobContext->multiThreadLevel = multiThreadLevel;
+    jobContext->client = &client;
+    jobContext->inputVec = &inputVec;
+    jobContext->outputVec = &outputVec;
+    jobContext->jobStateMutex = PTHREAD_MUTEX_INITIALIZER;
+    jobContext->threads  = new pthread_t[multiThreadLevel];
+    jobContext->contexts = new ThreadContext[multiThreadLevel];
     jobContext->is_waiting = false;
 
-    // the atomic_counters used by the job
-    atomic<int> atomic_counter(0);
-    atomic<int> atomic_barrier(0);
-    atomic<int> intermediaryElements(0);
-    atomic<int> outputElements(0);
-    atomic<int> threadsId(0);
-
-    (*jobContext).atomic_counter = &atomic_counter;
-    (*jobContext).atomic_barrier = &atomic_barrier;
-    (*jobContext).intermediaryElements = &intermediaryElements;
-    (*jobContext).outputElements = &outputElements;
-    (*jobContext).threadsId = &threadsId;
+    jobContext->atomic_counter = new atomic<int>(0);
+    jobContext->atomic_barrier = new atomic<int>(0);
+    jobContext->intermediaryElements = new atomic<int>(0);
+    jobContext->outputElements = new atomic<int>(0);
+    jobContext->threadsId = new atomic<int>(0);
 
 }
 
 void* MainThread(void* arg){
 
     JobContext* jc = (JobContext*) arg;
-    for (int i = 1; i < jc->multiThreadLevel; ++i) {
-        if(pthread_create(jc->threads + i, NULL, mapSortReduceThread, jc) !=  0){
-            cerr << SYSTEM_ERROR << "pthread_create";
-            exit(1);
-        }
-    }
-
     ThreadContext* mainThread = new ThreadContext();
     jc->contexts[0] = *mainThread;
     IntermediateVec* intermediateVec = new IntermediateVec();
@@ -262,8 +248,15 @@ void* MainThread(void* arg){
     mainThread->outputVec = jc->outputVec;
     mainThread->intermediaryElements = jc->intermediaryElements;
     mainThread->outputElements = jc->outputElements;
-
     jc->jobState.stage = MAP_STAGE;
+    jc->jobState.percentage = 0;
+    for (int i = 1; i < jc->multiThreadLevel; ++i) {
+        if(pthread_create(jc->threads + i, NULL, mapSortReduceThread, jc) !=  0){
+            cerr << SYSTEM_ERROR << "pthread_create";
+            exit(1);
+        }
+    }
+
     mapPhase(&jc, &mainThread);
     jc->fullIntermediaryElements = (int)(*jc->intermediaryElements);
     sortPhase(&mainThread);
@@ -283,6 +276,7 @@ void* MainThread(void* arg){
         exit(1);
     }
     reducePhase(&jc, &mainThread);
+
 }
 
 
@@ -292,11 +286,13 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
 
     auto* jobContext = new JobContext();
     initJobContext(client, inputVec, outputVec, multiThreadLevel, jobContext);
+
     if(pthread_create(jobContext->threads, NULL,
                       MainThread, jobContext) != 0) {
         cerr << SYSTEM_ERROR << "pthread_create";
         exit(1);
     }
+
     return (JobHandle)(jobContext);
 
 
