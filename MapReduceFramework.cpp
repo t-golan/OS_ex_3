@@ -26,8 +26,10 @@ struct JobContext{
     OutputVec* outputVec; // the output vector
     vector<IntermediateVec> intermediateVec;
     int multiThreadLevel; // the amount of needed thread (maybe useless)
+    int fullIntermediaryElements;
     pthread_t* threads; // pointer to an array of all existing threads
     ThreadContext* contexts;
+    bool is_waiting;
 
     atomic<int>* intermediaryElements; // a count for the amount of intermediary elements
     atomic<int>* outputElements; // a count for the amount of output elements
@@ -35,8 +37,7 @@ struct JobContext{
     atomic<int>* atomic_barrier; // a counter to use to implement the barrier
     atomic<int>* threadsId; // gives an id to each thread
 
-
-    pthread_mutex_t barrierMutex = PTHREAD_MUTEX_INITIALIZER;
+  //  pthread_mutex_t waitMutex = PTHREAD_MUTEX_INITIALIZER;
     pthread_cond_t cvMapSortBarrier = PTHREAD_COND_INITIALIZER;
     pthread_cond_t cvShuffleBarrier = PTHREAD_COND_INITIALIZER;
 };
@@ -132,7 +133,9 @@ void shufflePhase(void* arg) {
             current_iv->push_back(max);
             prev_max = max;
             contextsOfThreads[max_index].intermediateVec->pop_back();
+            jc->intermediaryElements--;
             is_first  = false;
+            updatePercentageShuffle(jc);
         }
         // if it's not the first vector
         else{
@@ -149,6 +152,8 @@ void shufflePhase(void* arg) {
                 current_iv->push_back(max);
                 contextsOfThreads[max_index].intermediateVec->pop_back();
             }
+            jc->intermediaryElements--;
+            updatePercentageShuffle(jc);
         }
 
         // if this iteration made one of the old vectors empty
@@ -224,6 +229,7 @@ void initJobContext(const MapReduceClient& client,
     (*jobContext).threads = threads;
     ThreadContext contexts[multiThreadLevel];
     (*jobContext).contexts = contexts;
+    jobContext->is_waiting = false;
 
     // the atomic_counters used by the job
     atomic<int> atomic_counter(0);
