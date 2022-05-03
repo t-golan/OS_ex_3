@@ -47,14 +47,14 @@ void emit2 (K2* key, V2* value, void* context){
     ThreadContext* threadContext = (ThreadContext*) context;
     IntermediatePair kv2 = IntermediatePair(key, value);
     threadContext->intermediateVec->push_back(kv2);
-    *(threadContext->intermediaryElements)++;
+    (*(threadContext->intermediaryElements))++;
 }
 
 void emit3 (K3* key, V3* value, void* context){
     ThreadContext* threadContext = (ThreadContext*) context;
     OutputPair kv3 = OutputPair(key, value);
     threadContext->outputVec->push_back(kv3);
-    *(threadContext->outputElements)++;
+    (*(threadContext->outputElements))++;
 }
 
 /***
@@ -96,7 +96,9 @@ void mapPhase(void* arg, void* context){
         InputPair kv = (*(jc->inputVec))[oldValue];
         jc->client->map(kv.first, kv.second, context);
         updatePercentageMap(jc);
+        oldValue = *(jc->atomic_counter)++;
     }
+    int i =1;
 }
 
 void sortPhase(void* context){
@@ -170,6 +172,7 @@ void reducePhase(void* arg, void* context){
         IntermediateVec kv = ((jc->intermediateVec))[oldValue];
         jc->client->reduce(&kv, context);
         updatePercentageReduce(jc, kv.size());
+        oldValue = *(jc->atomic_counter)++;
     }
 }
 
@@ -257,8 +260,8 @@ void* MainThread(void* arg){
         }
     }
 
-    mapPhase(&jc, &mainThread);
-    jc->fullIntermediaryElements = (int)(*jc->intermediaryElements);
+    mapPhase(jc, mainThread);
+    jc->fullIntermediaryElements = *(jc->intermediaryElements);
     sortPhase(&mainThread);
     if(++(*(jc->atomic_barrier)) < jc->multiThreadLevel)
     {
